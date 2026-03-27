@@ -21,7 +21,7 @@ async def main():
 
     # Удаляем вебхук перед запуском polling, если он был установлен
     await bot.delete_webhook()
-    logger.info("Бот запущен, ожидаю посты в канале %s", config.CHANNEL_ID)
+    logger.info("Бот запущен, каналы: %s", list(config.CHANNELS.keys()))
 
     await dp.start_polling(bot)
 
