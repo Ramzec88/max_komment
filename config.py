@@ -6,6 +6,11 @@ load_dotenv()
 MAX_BOT_TOKEN: str = os.environ["MAX_BOT_TOKEN"]
 BUTTON_TEXT: str = os.getenv("BUTTON_TEXT", "💬 Обсудить в чате")
 
+# user_id через запятую; если пусто — команды доступны всем
+ADMIN_USER_IDS: set[int] = {
+    int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()
+}
+
 
 def _parse_channels() -> dict[int, str]:
     """

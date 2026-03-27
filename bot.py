@@ -5,6 +5,7 @@ from maxapi import Bot, Dispatcher
 
 import config
 import handlers
+import storage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
+    storage.init_db()
     bot = Bot(token=config.MAX_BOT_TOKEN)
     dp = Dispatcher()
 
