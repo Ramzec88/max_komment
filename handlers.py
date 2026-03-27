@@ -26,13 +26,30 @@ def register(dp):
             logger.warning("Пост без body.mid, пропускаем")
             return
 
-        # Сохраняем существующие вложения (фото, видео и т.д.),
-        # убираем старую клавиатуру, если она уже есть
         existing = event.message.body.attachments or []
         non_keyboard = [a for a in existing if not isinstance(a, AttachmentButton)]
+        existing_keyboards = [a for a in existing if isinstance(a, AttachmentButton)]
+
+        our_button = LinkButton(text=config.BUTTON_TEXT, url=config.CHAT_URL)
+
+        if existing_keyboards:
+            # Берём существующую клавиатуру и проверяем, не добавляли ли мы уже кнопку
+            rows = list(existing_keyboards[0].payload.buttons)
+            already_added = any(
+                getattr(btn, "url", None) == config.CHAT_URL
+                for row in rows for btn in row
+            )
+            if already_added:
+                logger.info("Кнопка уже есть в посте %s, пропускаем", msg_id)
+                return
+            # Добавляем нашу кнопку новым рядом к существующим
+            rows.append([our_button])
+        else:
+            rows = [[our_button]]
 
         kb = InlineKeyboardBuilder()
-        kb.row(LinkButton(text=config.BUTTON_TEXT, url=config.CHAT_URL))
+        for row in rows:
+            kb.row(*row)
 
         new_attachments = non_keyboard + [kb.as_markup()]
 
