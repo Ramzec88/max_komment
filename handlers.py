@@ -2,6 +2,7 @@ import logging
 
 from maxapi.enums.chat_type import ChatType
 from maxapi.enums.message_link_type import MessageLinkType
+from maxapi.enums.parse_mode import ParseMode
 from maxapi.filters.channel_post import ChannelPostFilter
 from maxapi.filters.filter import BaseFilter
 from maxapi.types import MessageCreated
@@ -101,7 +102,7 @@ def register(dp) -> None:
             logger.info("Добавлен канал %s → %s", channel_id, chat_url)
             await event.message.answer(
                 f"✅ Канал <b>{channel_id}</b> добавлен.\nЧат: {chat_url}",
-                format="html",
+                format=ParseMode.HTML,
             )
             return
 
@@ -182,7 +183,7 @@ def register(dp) -> None:
             f"Канал найден: <b>{channel_id}</b>\n\n"
             "Теперь отправьте ссылку на чат для обсуждений\n"
             "(или /cancel для отмены):",
-            format="html",
+            format=ParseMode.HTML,
         )
 
     # ── Диалог: шаг 2 — ждём ссылку на чат ───────────────────────────────
@@ -213,7 +214,7 @@ def register(dp) -> None:
         logger.info("Добавлен канал %s → %s", channel_id, url)
         await msg.answer(
             f"✅ Готово!\nКанал: <b>{channel_id}</b>\nЧат: {url}",
-            format="html",
+            format=ParseMode.HTML,
         )
 
     # ── Обработчик постов канала (последним) ───────────────────────────────
