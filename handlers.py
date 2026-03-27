@@ -18,7 +18,9 @@ def register(dp):
     async def on_channel_post(event: MessageCreated):
         chat_id = event.message.recipient.chat_id
 
-        if config.CHANNEL_ID != 0 and chat_id != config.CHANNEL_ID:
+        # Ищем chat_url для этого канала; ключ 0 = «все каналы»
+        chat_url = config.CHANNELS.get(chat_id) or config.CHANNELS.get(0)
+        if not chat_url:
             return
 
         msg_id = event.message.body.mid if event.message.body else None
@@ -30,7 +32,7 @@ def register(dp):
         non_keyboard = [a for a in existing if not isinstance(a, AttachmentButton)]
         existing_keyboards = [a for a in existing if isinstance(a, AttachmentButton)]
 
-        our_button = LinkButton(text=config.BUTTON_TEXT, url=config.CHAT_URL)
+        our_button = LinkButton(text=config.BUTTON_TEXT, url=chat_url)
 
         if existing_keyboards:
             # Берём существующую клавиатуру и проверяем, не добавляли ли мы уже кнопку
