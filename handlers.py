@@ -16,7 +16,7 @@ import storage
 
 logger = logging.getLogger(__name__)
 
-# In-memory FSM: {user_id: {"step": "waiting_forward"|"waiting_url", "channel_id": int}}
+# In-memory FSM: {user_id: {"step": str, ...}}
 _pending: dict[int, dict] = {}
 
 
@@ -54,7 +54,17 @@ def _get_chat_url(channel_id: int) -> str | None:
     )
 
 
-def register(dp) -> None:
+def _is_discuss_row(row: list) -> bool:
+    return any(getattr(btn, "text", None) == config.BUTTON_TEXT for btn in row)
+
+
+def _split_rows(rows: list[list]) -> tuple[list[list], list[list]]:
+    custom = [r for r in rows if not _is_discuss_row(r)]
+    discuss = [r for r in rows if _is_discuss_row(r)]
+    return custom, discuss
+
+
+def register(dp, bot) -> None:
     """Регистрирует все обработчики. Порядок важен."""
 
     # ── /cancel ────────────────────────────────────────────────────────────
@@ -78,7 +88,6 @@ def register(dp) -> None:
         parts = (event.message.body.text or "").split()
 
         if len(parts) == 1:
-            # Без аргументов — запускаем диалог
             sender = event.message.sender
             if sender:
                 _pending[sender.user_id] = {"step": "waiting_forward"}
@@ -91,7 +100,6 @@ def register(dp) -> None:
             return
 
         if len(parts) == 3:
-            # Прямое добавление: /addchannel <id> <url>
             try:
                 channel_id = int(parts[1])
             except ValueError:
@@ -160,7 +168,39 @@ def register(dp) -> None:
 
         await event.message.answer("📋 Настроенные каналы:\n" + "\n".join(lines))
 
-    # ── Диалог: шаг 1 — ждём пересланный пост ─────────────────────────────
+    # ── /addbutton ─────────────────────────────────────────────────────────
+
+    @dp.message_created(Command("addbutton"))
+    async def cmd_add_button(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "add_btn_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, к которому нужно добавить кнопку.\n"
+            "/cancel для отмены."
+        )
+
+    # ── /removebutton ──────────────────────────────────────────────────────
+
+    @dp.message_created(Command("removebutton"))
+    async def cmd_remove_button(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "rm_btn_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, с которого нужно удалить кнопку.\n"
+            "/cancel для отмены."
+        )
+
+    # ── Диалог: шаг 1 — ждём пересланный пост (addchannel) ────────────────
 
     @dp.message_created(PendingStateFilter("waiting_forward"))
     async def on_forwarded_post(event: MessageCreated):
@@ -186,7 +226,7 @@ def register(dp) -> None:
             format=ParseMode.HTML,
         )
 
-    # ── Диалог: шаг 2 — ждём ссылку на чат ───────────────────────────────
+    # ── Диалог: шаг 2 — ждём ссылку на чат (addchannel) ──────────────────
 
     @dp.message_created(PendingStateFilter("waiting_url"))
     async def on_chat_url(event: MessageCreated):
@@ -216,6 +256,256 @@ def register(dp) -> None:
             f"✅ Готово!\nКанал: <b>{channel_id}</b>\nЧат: {url}",
             format=ParseMode.HTML,
         )
+
+    # ── addbutton: шаг 1 — ждём пересланный пост ──────────────────────────
+
+    @dp.message_created(PendingStateFilter("add_btn_forward"))
+    async def on_add_btn_forward(event: MessageCreated):
+        msg = event.message
+        link = msg.link
+
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или /cancel для отмены."
+            )
+            return
+
+        message_id = link.message.mid
+        channel_id = link.chat_id
+        sender = msg.sender
+        if sender:
+            _pending[sender.user_id] = {
+                "step": "add_btn_text",
+                "message_id": message_id,
+                "channel_id": channel_id,
+            }
+
+        await msg.answer(
+            "Введите текст кнопки (например: «Купить»):\n"
+            "/cancel для отмены."
+        )
+
+    # ── addbutton: шаг 2 — ждём текст кнопки ─────────────────────────────
+
+    @dp.message_created(PendingStateFilter("add_btn_text"))
+    async def on_add_btn_text(event: MessageCreated):
+        msg = event.message
+        btn_text = (msg.body.text or "").strip() if msg.body else ""
+
+        if not btn_text:
+            await msg.answer("Текст не может быть пустым. Введите текст кнопки:")
+            return
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        _pending[sender.user_id]["step"] = "add_btn_url"
+        _pending[sender.user_id]["btn_text"] = btn_text
+
+        await msg.answer(
+            f"Текст кнопки: «{btn_text}»\n\n"
+            "Теперь введите URL для кнопки:\n"
+            "/cancel для отмены."
+        )
+
+    # ── addbutton: шаг 3 — ждём URL ───────────────────────────────────────
+
+    @dp.message_created(PendingStateFilter("add_btn_url"))
+    async def on_add_btn_url(event: MessageCreated):
+        msg = event.message
+        btn_url = (msg.body.text or "").strip() if msg.body else ""
+
+        if not btn_url.startswith("http"):
+            await msg.answer(
+                "Отправьте корректную ссылку (должна начинаться с https://).\n"
+                "/cancel для отмены."
+            )
+            return
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.pop(sender.user_id, {})
+        mid = state.get("message_id")
+        btn_text = state.get("btn_text", "")
+
+        if not mid:
+            await msg.answer("Что-то пошло не так. Начните заново: /addbutton")
+            return
+
+        try:
+            post = await bot.get_message(message_id=mid)
+        except Exception:
+            logger.exception("Не удалось получить пост %s", mid)
+            await msg.answer("❌ Не удалось получить пост. Попробуйте снова.")
+            return
+
+        existing = (post.body.attachments or []) if post.body else []
+        non_keyboard = [a for a in existing if not isinstance(a, AttachmentButton)]
+        existing_keyboards = [a for a in existing if isinstance(a, AttachmentButton)]
+
+        rows = list(existing_keyboards[0].payload.buttons) if existing_keyboards else []
+        custom_rows, discuss_rows = _split_rows(rows)
+
+        new_row = [LinkButton(text=btn_text, url=btn_url)]
+        new_rows = custom_rows + [new_row] + discuss_rows
+
+        kb = InlineKeyboardBuilder()
+        for row in new_rows:
+            kb.row(*row)
+
+        try:
+            await post.edit(attachments=non_keyboard + [kb.as_markup()])
+            logger.info("Кнопка «%s» добавлена к посту %s", btn_text, mid)
+            await msg.answer(f"✅ Кнопка «{btn_text}» добавлена к посту!")
+        except Exception:
+            logger.exception("Не удалось изменить пост %s", mid)
+            await msg.answer(
+                "❌ Не удалось изменить пост. "
+                "Проверьте, что бот — администратор канала."
+            )
+
+    # ── removebutton: шаг 1 — ждём пересланный пост ───────────────────────
+
+    @dp.message_created(PendingStateFilter("rm_btn_forward"))
+    async def on_rm_btn_forward(event: MessageCreated):
+        msg = event.message
+        link = msg.link
+
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или /cancel для отмены."
+            )
+            return
+
+        message_id = link.message.mid
+        sender = msg.sender
+        if sender is None:
+            return
+
+        try:
+            post = await bot.get_message(message_id=message_id)
+        except Exception:
+            logger.exception("Не удалось получить пост %s", message_id)
+            await msg.answer("❌ Не удалось получить пост. Попробуйте снова.")
+            return
+
+        existing = (post.body.attachments or []) if post.body else []
+        existing_keyboards = [a for a in existing if isinstance(a, AttachmentButton)]
+
+        if not existing_keyboards:
+            await msg.answer("В этом посте нет кнопок.")
+            _pending.pop(sender.user_id, None)
+            return
+
+        rows = list(existing_keyboards[0].payload.buttons)
+        custom_rows, _ = _split_rows(rows)
+
+        if not custom_rows:
+            await msg.answer(
+                "В этом посте нет пользовательских кнопок "
+                "(только «" + config.BUTTON_TEXT + "»)."
+            )
+            _pending.pop(sender.user_id, None)
+            return
+
+        _pending[sender.user_id] = {
+            "step": "rm_btn_select",
+            "message_id": message_id,
+        }
+
+        lines = []
+        for i, row in enumerate(custom_rows, 1):
+            btn_labels = ", ".join(getattr(btn, "text", "?") for btn in row)
+            lines.append(f"{i}. {btn_labels}")
+
+        await msg.answer(
+            "Выберите кнопку для удаления (введите номер):\n"
+            + "\n".join(lines)
+            + "\n\n/cancel для отмены."
+        )
+
+    # ── removebutton: шаг 2 — ждём выбор номера ───────────────────────────
+
+    @dp.message_created(PendingStateFilter("rm_btn_select"))
+    async def on_rm_btn_select(event: MessageCreated):
+        msg = event.message
+        text = (msg.body.text or "").strip() if msg.body else ""
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.pop(sender.user_id, {})
+        mid = state.get("message_id")
+
+        if not mid:
+            await msg.answer("Что-то пошло не так. Начните заново: /removebutton")
+            return
+
+        try:
+            choice = int(text)
+        except ValueError:
+            await msg.answer(
+                "Введите номер кнопки из списка. Начните заново: /removebutton"
+            )
+            return
+
+        try:
+            post = await bot.get_message(message_id=mid)
+        except Exception:
+            logger.exception("Не удалось получить пост %s", mid)
+            await msg.answer("❌ Не удалось получить пост. Попробуйте снова.")
+            return
+
+        existing = (post.body.attachments or []) if post.body else []
+        non_keyboard = [a for a in existing if not isinstance(a, AttachmentButton)]
+        existing_keyboards = [a for a in existing if isinstance(a, AttachmentButton)]
+
+        rows = list(existing_keyboards[0].payload.buttons) if existing_keyboards else []
+        custom_rows, discuss_rows = _split_rows(rows)
+
+        if choice < 1 or choice > len(custom_rows):
+            await msg.answer(
+                f"Номер должен быть от 1 до {len(custom_rows)}. "
+                "Начните заново: /removebutton"
+            )
+            return
+
+        removed_row = custom_rows.pop(choice - 1)
+        removed_label = ", ".join(getattr(btn, "text", "?") for btn in removed_row)
+
+        new_rows = custom_rows + discuss_rows
+
+        if not new_rows:
+            try:
+                await post.edit(attachments=non_keyboard)
+                await msg.answer(
+                    f"✅ Кнопка «{removed_label}» удалена. Клавиатура поста очищена."
+                )
+            except Exception:
+                logger.exception("Не удалось изменить пост %s", mid)
+                await msg.answer("❌ Не удалось изменить пост.")
+            return
+
+        kb = InlineKeyboardBuilder()
+        for row in new_rows:
+            kb.row(*row)
+
+        try:
+            await post.edit(attachments=non_keyboard + [kb.as_markup()])
+            logger.info("Кнопка «%s» удалена из поста %s", removed_label, mid)
+            await msg.answer(f"✅ Кнопка «{removed_label}» удалена.")
+        except Exception:
+            logger.exception("Не удалось изменить пост %s", mid)
+            await msg.answer(
+                "❌ Не удалось изменить пост. "
+                "Проверьте, что бот — администратор канала."
+            )
 
     # ── Обработчик постов канала (последним) ───────────────────────────────
 

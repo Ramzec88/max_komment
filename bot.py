@@ -19,7 +19,7 @@ async def main():
     bot = Bot(token=config.MAX_BOT_TOKEN)
     dp = Dispatcher()
 
-    handlers.register(dp)
+    handlers.register(dp, bot)
 
     # Удаляем вебхук перед запуском polling, если он был установлен
     await bot.delete_webhook()
