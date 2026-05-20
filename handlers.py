@@ -358,7 +358,7 @@ def register(dp, bot) -> None:
             kb.row(*row)
 
         try:
-            await post.edit(attachments=non_keyboard + [kb.as_markup()])
+            await bot.edit_message(message_id=mid, attachments=non_keyboard + [kb.as_markup()])
             logger.info("Кнопка «%s» добавлена к посту %s", btn_text, mid)
             await msg.answer(f"✅ Кнопка «{btn_text}» добавлена к посту!")
         except Exception:
@@ -483,7 +483,7 @@ def register(dp, bot) -> None:
 
         if not new_rows:
             try:
-                await post.edit(attachments=non_keyboard)
+                await bot.edit_message(message_id=mid, attachments=non_keyboard)
                 await msg.answer(
                     f"✅ Кнопка «{removed_label}» удалена. Клавиатура поста очищена."
                 )
@@ -497,7 +497,7 @@ def register(dp, bot) -> None:
             kb.row(*row)
 
         try:
-            await post.edit(attachments=non_keyboard + [kb.as_markup()])
+            await bot.edit_message(message_id=mid, attachments=non_keyboard + [kb.as_markup()])
             logger.info("Кнопка «%s» удалена из поста %s", removed_label, mid)
             await msg.answer(f"✅ Кнопка «{removed_label}» удалена.")
         except Exception:
