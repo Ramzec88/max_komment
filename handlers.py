@@ -168,6 +168,96 @@ def register(dp, bot) -> None:
 
         await event.message.answer("📋 Настроенные каналы:\n" + "\n".join(lines))
 
+    # ── /whoowns ───────────────────────────────────────────────────────────
+
+    @dp.message_created(Command("whoowns"))
+    async def cmd_whoowns(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "whoowns_input"}
+        await event.message.answer(
+            "Перешлите пост из канала или отправьте ссылку на канал "
+            "(например: https://max.ru/имя_канала или просто @имя_канала).\n"
+            "/cancel для отмены."
+        )
+
+    # ── whoowns: ждём пост или ссылку ─────────────────────────────────────
+
+    @dp.message_created(PendingStateFilter("whoowns_input"))
+    async def on_whoowns_input(event: MessageCreated):
+        msg = event.message
+        sender = msg.sender
+        if sender is None:
+            return
+
+        _pending.pop(sender.user_id, None)
+
+        link = msg.link
+        text = (msg.body.text or "").strip() if msg.body else ""
+
+        chat = None
+        chat_id = None
+
+        # Пересланный пост — берём chat_id напрямую
+        if link and link.type == MessageLinkType.FORWARD and link.chat_id:
+            chat_id = link.chat_id
+            try:
+                chat = await bot.get_chat_by_id(id=chat_id)
+            except Exception:
+                logger.exception("Не удалось получить чат %s", chat_id)
+                await msg.answer("❌ Не удалось получить информацию о канале.")
+                return
+
+        # Текстовая ссылка или @alias
+        elif text:
+            try:
+                chat = await bot.get_chat_by_link(text)
+                chat_id = chat.chat_id
+            except Exception:
+                logger.exception("Не удалось найти канал по ссылке: %s", text)
+                await msg.answer(
+                    "❌ Не удалось найти канал. Проверьте ссылку и попробуйте снова."
+                )
+                return
+        else:
+            await msg.answer(
+                "Перешлите пост из канала или отправьте ссылку на канал.\n"
+                "/cancel для отмены."
+            )
+            _pending[sender.user_id] = {"step": "whoowns_input"}
+            return
+
+        if chat is None or chat.owner_id is None:
+            await msg.answer("⚠️ Не удалось определить владельца канала.")
+            return
+
+        owner_id = chat.owner_id
+        channel_title = chat.title or str(chat_id)
+
+        # Пробуем получить имя/ник владельца
+        owner_name = None
+        owner_username = None
+        if chat_id is not None:
+            try:
+                member = await bot.get_chat_member(chat_id, owner_id)
+                if member:
+                    owner_name = member.full_name
+                    owner_username = member.username
+            except Exception:
+                pass  # Бот не в канале — покажем только ID
+
+        lines = [f"📢 Канал: <b>{channel_title}</b>", f"👤 Владелец ID: <code>{owner_id}</code>"]
+        if owner_name:
+            lines.append(f"Имя: {owner_name}")
+        if owner_username:
+            lines.append(f"Ник: @{owner_username}")
+
+        await msg.answer("\n".join(lines), format=ParseMode.HTML)
+
     # ── /addbutton ─────────────────────────────────────────────────────────
 
     @dp.message_created(Command("addbutton"))
