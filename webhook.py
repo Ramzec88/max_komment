@@ -32,6 +32,7 @@ def create_app(bot, maxapi_webhook) -> web.Application:
             return web.Response(status=400, text="Bad JSON")
 
         update_type = data.get("update_type", "")
+        logger.info("WEBHOOK EVENT: %s | keys: %s", update_type, list(data.keys()))
 
         if update_type in COMMENT_TYPES:
             await _notify_admins(bot, data, kind=COMMENT_KIND[update_type])
