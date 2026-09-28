@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from maxapi.enums.chat_type import ChatType
 from maxapi.enums.message_link_type import MessageLinkType
@@ -12,6 +13,7 @@ from maxapi.types.attachments.buttons.link_button import LinkButton
 from maxapi.utils.inline_keyboard import InlineKeyboardBuilder
 
 import config
+import platform_api
 import storage
 
 logger = logging.getLogger(__name__)
@@ -257,6 +259,82 @@ def register(dp, bot) -> None:
             lines.append(f"Ник: @{owner_username}")
 
         await msg.answer("\n".join(lines), format=ParseMode.HTML)
+
+    # ── /comments ──────────────────────────────────────────────────────────
+
+    @dp.message_created(Command("comments"))
+    async def cmd_comments(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "comments_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, чтобы посмотреть его комментарии.\n"
+            "/cancel для отмены."
+        )
+
+    # ── comments: ждём пересланный пост ───────────────────────────────────
+
+    @dp.message_created(PendingStateFilter("comments_forward"))
+    async def on_comments_forward(event: MessageCreated):
+        msg = event.message
+        sender = msg.sender
+        if sender is None:
+            return
+
+        _pending.pop(sender.user_id, None)
+
+        link = msg.link
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или начните заново: /comments"
+            )
+            return
+
+        mid = link.message.mid
+        await msg.answer("⏳ Загружаю комментарии…")
+
+        try:
+            comments = await platform_api.get_comments(
+                token=config.MAX_BOT_TOKEN, message_id=mid, count=20
+            )
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+            return
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {e}")
+            return
+
+        if not comments:
+            await msg.answer("Комментариев к этому посту пока нет.")
+            return
+
+        lines = [f"💬 Комментарии к посту (последние {len(comments)}):\n"]
+        for i, c in enumerate(comments, 1):
+            sender_info = c.get("sender") or {}
+            first = sender_info.get("first_name", "")
+            last = sender_info.get("last_name", "") or ""
+            name = f"{first} {last}".strip() or "Аноним"
+            username = sender_info.get("username")
+            if username:
+                name = f"{name} (@{username})"
+
+            ts = c.get("timestamp")
+            time_str = ""
+            if ts:
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                time_str = f" · {dt.strftime('%d.%m %H:%M')}"
+
+            body = c.get("body") or {}
+            text = (body.get("text") or "").strip() or "— (без текста)"
+
+            lines.append(f"<b>{i}. {name}</b>{time_str}\n{text}")
+
+        await msg.answer("\n\n".join(lines), format=ParseMode.HTML)
 
     # ── /addbutton ─────────────────────────────────────────────────────────
 
