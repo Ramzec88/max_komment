@@ -1,9 +1,21 @@
 import logging
+import ssl
 import aiohttp
 
 PLATFORM_API = "https://platform-api2.max.ru"
 COMMENT_UPDATE_TYPES = ["comment_created", "comment_edited", "comment_removed"]
 logger = logging.getLogger(__name__)
+
+# platform-api2.max.ru использует сертификат Минцифры, которому не доверяют
+# стандартные CA-хранилища на зарубежных серверах (Railway, Heroku и др.)
+_SSL = ssl.create_default_context()
+_SSL.check_hostname = False
+_SSL.verify_mode = ssl.CERT_NONE
+
+
+def _session() -> aiohttp.ClientSession:
+    connector = aiohttp.TCPConnector(ssl=_SSL)
+    return aiohttp.ClientSession(connector=connector)
 
 
 async def subscribe_webhooks(token: str, url: str) -> dict:
@@ -12,7 +24,7 @@ async def subscribe_webhooks(token: str, url: str) -> dict:
     headers = {"Authorization": token}
     payload = {"url": url, "update_types": COMMENT_UPDATE_TYPES}
 
-    async with aiohttp.ClientSession() as session:
+    async with _session() as session:
         async with session.post(endpoint, headers=headers, json=payload) as resp:
             data = await resp.json()
             if resp.status not in (200, 201):
@@ -25,7 +37,7 @@ async def get_subscriptions(token: str) -> list[dict]:
     endpoint = f"{PLATFORM_API}/subscriptions"
     headers = {"Authorization": token}
 
-    async with aiohttp.ClientSession() as session:
+    async with _session() as session:
         async with session.get(endpoint, headers=headers) as resp:
             if resp.status != 200:
                 return []
@@ -39,7 +51,7 @@ async def get_comments(token: str, message_id: str, count: int = 10) -> list[dic
     params = {"count": count}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _session() as session:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status == 401:
                     raise PermissionError("Токен недействителен (401)")
@@ -66,7 +78,7 @@ async def delete_comment(token: str, message_id: str, comment_id: str) -> bool:
     params = {"comment_id": comment_id}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _session() as session:
             async with session.delete(url, headers=headers, params=params) as resp:
                 if resp.status == 401:
                     raise PermissionError("Токен недействителен (401)")
@@ -96,7 +108,7 @@ async def edit_comment(token: str, message_id: str, comment_id: str, text: str) 
     payload = {"text": text}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _session() as session:
             async with session.put(url, headers=headers, params=params, json=payload) as resp:
                 if resp.status == 401:
                     raise PermissionError("Токен недействителен (401)")
@@ -125,7 +137,7 @@ async def post_comment(token: str, message_id: str, text: str) -> dict:
     payload = {"text": text}
 
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _session() as session:
             async with session.post(url, headers=headers, json=payload) as resp:
                 if resp.status == 401:
                     raise PermissionError("Токен недействителен (401)")
