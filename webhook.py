@@ -7,23 +7,42 @@ import config
 
 logger = logging.getLogger(__name__)
 
+COMMENT_TYPES = {"comment_created", "comment_edited", "comment_removed"}
+COMMENT_KIND = {
+    "comment_created": "новый",
+    "comment_edited": "изменён",
+    "comment_removed": "удалён",
+}
 
-async def handle_webhook(request: web.Request) -> web.Response:
-    try:
-        data = await request.json()
-    except Exception:
-        return web.Response(status=400, text="Bad JSON")
 
-    update_type = data.get("update_type", "")
+def create_app(bot, maxapi_webhook) -> web.Application:
+    """
+    Создаёт aiohttp-приложение.
+    - Все bot-события (message_created, channel_post и т.д.) → maxapi dispatcher
+    - comment_* события → наш обработчик уведомлений
+    """
+    app = web.Application()
+    app["bot"] = bot
+    app.on_startup.append(maxapi_webhook.on_startup)
 
-    if update_type == "comment_created":
-        await _notify_admins(request.app["bot"], data, kind="новый")
-    elif update_type == "comment_edited":
-        await _notify_admins(request.app["bot"], data, kind="изменён")
-    elif update_type == "comment_removed":
-        await _notify_admins(request.app["bot"], data, kind="удалён")
+    async def _webhook_handler(request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+        except Exception:
+            return web.Response(status=400, text="Bad JSON")
 
-    return web.Response(text="OK")
+        update_type = data.get("update_type", "")
+
+        if update_type in COMMENT_TYPES:
+            await _notify_admins(bot, data, kind=COMMENT_KIND[update_type])
+        else:
+            await maxapi_webhook._dispatch(data)
+
+        return web.Response(text="OK")
+
+    app.router.add_post("/webhook", _webhook_handler)
+    app.router.add_get("/health", lambda r: web.Response(text="OK"))
+    return app
 
 
 async def _notify_admins(bot, data: dict, kind: str) -> None:
@@ -66,11 +85,3 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
             await bot.send_message(user_id=admin_id, text=notification, parse_mode=ParseMode.HTML)
         except Exception:
             logger.exception("Не удалось отправить уведомление пользователю %s", admin_id)
-
-
-def create_app(bot) -> web.Application:
-    app = web.Application()
-    app["bot"] = bot
-    app.router.add_post("/webhook", handle_webhook)
-    app.router.add_get("/health", lambda r: web.Response(text="OK"))
-    return app
