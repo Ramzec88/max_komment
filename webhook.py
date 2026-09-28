@@ -41,6 +41,7 @@ def create_app(bot, maxapi_webhook) -> web.Application:
         return web.Response(text="OK")
 
     app.router.add_post("/webhook", _webhook_handler)
+    app.router.add_get("/webhook", lambda r: web.Response(text="OK"))
     app.router.add_get("/health", lambda r: web.Response(text="OK"))
     return app
 
