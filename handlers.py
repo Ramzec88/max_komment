@@ -336,6 +336,84 @@ def register(dp, bot) -> None:
 
         await msg.answer("\n\n".join(lines), format=ParseMode.HTML)
 
+    # ── /comment ───────────────────────────────────────────────────────────
+
+    @dp.message_created(Command("comment"))
+    async def cmd_comment(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "comment_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, к которому хотите добавить комментарий.\n"
+            "/cancel для отмены."
+        )
+
+    # ── comment: шаг 1 — ждём пересланный пост ────────────────────────────
+
+    @dp.message_created(PendingStateFilter("comment_forward"))
+    async def on_comment_forward(event: MessageCreated):
+        msg = event.message
+        link = msg.link
+
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или /cancel для отмены."
+            )
+            return
+
+        mid = link.message.mid
+        sender = msg.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "comment_text", "message_id": mid}
+
+        await msg.answer(
+            "Введите текст комментария (до 4000 символов):\n"
+            "/cancel для отмены."
+        )
+
+    # ── comment: шаг 2 — ждём текст комментария ───────────────────────────
+
+    @dp.message_created(PendingStateFilter("comment_text"))
+    async def on_comment_text(event: MessageCreated):
+        msg = event.message
+        text = (msg.body.text or "").strip() if msg.body else ""
+
+        if not text:
+            await msg.answer("Текст не может быть пустым. Введите комментарий:")
+            return
+
+        if len(text) > 4000:
+            await msg.answer(f"Текст слишком длинный ({len(text)} символов, максимум 4000). Сократите и попробуйте снова:")
+            return
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.pop(sender.user_id, {})
+        mid = state.get("message_id")
+        if not mid:
+            await msg.answer("Что-то пошло не так. Начните заново: /comment")
+            return
+
+        try:
+            result = await platform_api.post_comment(
+                token=config.MAX_BOT_TOKEN, message_id=mid, text=text
+            )
+            comment_id = (result or {}).get("mid", "")
+            logger.info("Опубликован комментарий %s к посту %s", comment_id, mid)
+            await msg.answer("✅ Комментарий опубликован!")
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+        except Exception as e:
+            logger.exception("Не удалось опубликовать комментарий к посту %s", mid)
+            await msg.answer(f"❌ Ошибка: {e}")
+
     # ── /addbutton ─────────────────────────────────────────────────────────
 
     @dp.message_created(Command("addbutton"))

@@ -30,3 +30,34 @@ async def get_comments(token: str, message_id: str, count: int = 10) -> list[dic
     except Exception as e:
         logger.exception("Ошибка при получении комментариев к посту %s", message_id)
         raise RuntimeError(str(e)) from e
+
+
+async def post_comment(token: str, message_id: str, text: str) -> dict:
+    url = f"{PLATFORM_API}/messages/{message_id}/comments"
+    headers = {"Authorization": token}
+    payload = {"text": text}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, json=payload) as resp:
+                if resp.status == 401:
+                    raise PermissionError("Токен недействителен (401)")
+                if resp.status == 403:
+                    raise PermissionError(
+                        "Нет доступа (403) — проверьте, что бот администратор канала "
+                        "с правами read_all_messages и write, "
+                        "и что комментарии включены в настройках канала"
+                    )
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.warning("post_comment HTTP %s: %s", resp.status, body)
+                    raise RuntimeError(f"HTTP {resp.status}: {body}")
+                data = await resp.json()
+                return data.get("message", {})
+    except PermissionError:
+        raise
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.exception("Ошибка при отправке комментария к посту %s", message_id)
+        raise RuntimeError(str(e)) from e
