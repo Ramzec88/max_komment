@@ -554,6 +554,171 @@ def register(dp, bot) -> None:
             f"Текст: «{comment_text[:100]}{'…' if len(comment_text) > 100 else ''}»"
         )
 
+    # ── /editcomment ───────────────────────────────────────────────────────
+
+    @dp.message_created(Command("editcomment"))
+    async def cmd_edit_comment(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "editcmt_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, в котором нужно отредактировать комментарий.\n"
+            "/cancel для отмены."
+        )
+
+    # ── editcomment: шаг 1 — ждём пересланный пост ────────────────────────
+
+    @dp.message_created(PendingStateFilter("editcmt_forward"))
+    async def on_editcmt_forward(event: MessageCreated):
+        msg = event.message
+        link = msg.link
+
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или /cancel для отмены."
+            )
+            return
+
+        mid = link.message.mid
+        sender = msg.sender
+        if sender is None:
+            return
+
+        await msg.answer("⏳ Загружаю комментарии…")
+
+        try:
+            comments = await platform_api.get_comments(
+                token=config.MAX_BOT_TOKEN, message_id=mid, count=50
+            )
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+            _pending.pop(sender.user_id, None)
+            return
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {e}")
+            _pending.pop(sender.user_id, None)
+            return
+
+        if not comments:
+            await msg.answer("Комментариев к этому посту нет.")
+            _pending.pop(sender.user_id, None)
+            return
+
+        _pending[sender.user_id] = {
+            "step": "editcmt_select",
+            "message_id": mid,
+            "comments": comments,
+        }
+
+        lines = ["Выберите номер комментария для редактирования:\n",
+                 "<i>(можно редактировать только свои комментарии или от имени канала)</i>\n"]
+        for i, c in enumerate(comments, 1):
+            sender_info = c.get("sender") or {}
+            name = sender_info.get("first_name", "Аноним")
+            body = c.get("body") or {}
+            text = (body.get("text") or "").strip()
+            preview = text[:60] + ("…" if len(text) > 60 else "")
+            lines.append(f"{i}. <b>{name}</b>: {preview}")
+
+        await msg.answer(
+            "\n".join(lines) + "\n\n/cancel для отмены.",
+            format=ParseMode.HTML,
+        )
+
+    # ── editcomment: шаг 2 — ждём номер комментария ───────────────────────
+
+    @dp.message_created(PendingStateFilter("editcmt_select"))
+    async def on_editcmt_select(event: MessageCreated):
+        msg = event.message
+        text = (msg.body.text or "").strip() if msg.body else ""
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.get(sender.user_id, {})
+        comments = state.get("comments", [])
+
+        try:
+            choice = int(text)
+        except ValueError:
+            await msg.answer("Введите номер из списка. /cancel для отмены.")
+            return
+
+        if choice < 1 or choice > len(comments):
+            await msg.answer(
+                f"Номер должен быть от 1 до {len(comments)}. /cancel для отмены."
+            )
+            return
+
+        target = comments[choice - 1]
+        comment_id = target.get("mid") or target.get("comment_id", "")
+        body = target.get("body") or {}
+        current_text = (body.get("text") or "").strip()
+
+        if not comment_id:
+            await msg.answer("❌ Не удалось определить ID комментария.")
+            _pending.pop(sender.user_id, None)
+            return
+
+        _pending[sender.user_id] = {
+            "step": "editcmt_text",
+            "message_id": state.get("message_id"),
+            "comment_id": comment_id,
+        }
+
+        await msg.answer(
+            f"Текущий текст:\n<i>{current_text[:200]}</i>\n\n"
+            "Введите новый текст (до 4000 символов):\n/cancel для отмены.",
+            format=ParseMode.HTML,
+        )
+
+    # ── editcomment: шаг 3 — ждём новый текст ─────────────────────────────
+
+    @dp.message_created(PendingStateFilter("editcmt_text"))
+    async def on_editcmt_text(event: MessageCreated):
+        msg = event.message
+        new_text = (msg.body.text or "").strip() if msg.body else ""
+
+        if not new_text:
+            await msg.answer("Текст не может быть пустым. Введите новый текст:")
+            return
+
+        if len(new_text) > 4000:
+            await msg.answer(f"Слишком длинный текст ({len(new_text)} симв., макс. 4000). Сократите:")
+            return
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.pop(sender.user_id, {})
+        mid = state.get("message_id")
+        comment_id = state.get("comment_id")
+
+        if not mid or not comment_id:
+            await msg.answer("Что-то пошло не так. Начните заново: /editcomment")
+            return
+
+        try:
+            await platform_api.edit_comment(
+                token=config.MAX_BOT_TOKEN,
+                message_id=mid,
+                comment_id=comment_id,
+                text=new_text,
+            )
+            logger.info("Отредактирован комментарий %s поста %s", comment_id, mid)
+            await msg.answer("✅ Комментарий отредактирован!")
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {e}")
+
     # ── /addbutton ─────────────────────────────────────────────────────────
 
     @dp.message_created(Command("addbutton"))

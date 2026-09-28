@@ -61,6 +61,36 @@ async def delete_comment(token: str, message_id: str, comment_id: str) -> bool:
         raise RuntimeError(str(e)) from e
 
 
+async def edit_comment(token: str, message_id: str, comment_id: str, text: str) -> bool:
+    url = f"{PLATFORM_API}/messages/{message_id}/comments"
+    headers = {"Authorization": token}
+    params = {"comment_id": comment_id}
+    payload = {"text": text}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, headers=headers, params=params, json=payload) as resp:
+                if resp.status == 401:
+                    raise PermissionError("Токен недействителен (401)")
+                if resp.status == 403:
+                    raise PermissionError(
+                        "Нет доступа (403) — можно редактировать только свои комментарии "
+                        "или комментарии от имени канала (если есть право edit)"
+                    )
+                data = await resp.json()
+                if not data.get("success"):
+                    msg = data.get("message", "неизвестная ошибка")
+                    raise RuntimeError(f"Редактирование не выполнено: {msg}")
+                return True
+    except PermissionError:
+        raise
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.exception("Ошибка при редактировании комментария %s поста %s", comment_id, message_id)
+        raise RuntimeError(str(e)) from e
+
+
 async def post_comment(token: str, message_id: str, text: str) -> dict:
     url = f"{PLATFORM_API}/messages/{message_id}/comments"
     headers = {"Authorization": token}
