@@ -5,6 +5,8 @@ load_dotenv()
 
 MAX_BOT_TOKEN: str = os.environ["MAX_BOT_TOKEN"]
 BUTTON_TEXT: str = os.getenv("BUTTON_TEXT", "💬 Обсудить в чате")
+# Публичный URL сервиса на Railway (нужен для регистрации webhook)
+WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "").rstrip("/")
 
 # user_id через запятую; если пусто — команды доступны всем
 ADMIN_USER_IDS: set[int] = {

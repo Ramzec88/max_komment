@@ -2,7 +2,35 @@ import logging
 import aiohttp
 
 PLATFORM_API = "https://platform-api2.max.ru"
+COMMENT_UPDATE_TYPES = ["comment_created", "comment_edited", "comment_removed"]
 logger = logging.getLogger(__name__)
+
+
+async def subscribe_webhooks(token: str, url: str) -> dict:
+    """Регистрирует webhook для событий комментариев."""
+    endpoint = f"{PLATFORM_API}/subscriptions"
+    headers = {"Authorization": token}
+    payload = {"url": url, "update_types": COMMENT_UPDATE_TYPES}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(endpoint, headers=headers, json=payload) as resp:
+            data = await resp.json()
+            if resp.status not in (200, 201):
+                raise RuntimeError(f"Не удалось подписаться на webhook: HTTP {resp.status} — {data}")
+            return data
+
+
+async def get_subscriptions(token: str) -> list[dict]:
+    """Возвращает активные webhook-подписки."""
+    endpoint = f"{PLATFORM_API}/subscriptions"
+    headers = {"Authorization": token}
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(endpoint, headers=headers) as resp:
+            if resp.status != 200:
+                return []
+            data = await resp.json()
+            return data.get("subscriptions", [])
 
 
 async def get_comments(token: str, message_id: str, count: int = 10) -> list[dict]:
