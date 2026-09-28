@@ -53,29 +53,53 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
     if not config.ADMIN_USER_IDS:
         return
 
-    msg = data.get("message") or {}
-    recipient = msg.get("recipient") or {}
-    sender_info = msg.get("sender") or {}
-    body = msg.get("body") or {}
+    update_type = data.get("update_type", "")
 
-    post_id = recipient.get("post_id", "")
-    channel_id = recipient.get("chat_id", "")
-    author_name = sender_info.get("first_name", "Аноним")
-    username = sender_info.get("username")
-    text = (body.get("text") or "").strip()
+    # comment_removed has a flat structure (no nested message object)
+    if update_type == "comment_removed":
+        channel_id = data.get("chat_id", "")
+        post_id = data.get("post_id", "")
+        user_id = data.get("user_id")
+        ts = data.get("timestamp")
+        author = f"ID {user_id}" if user_id else "неизвестен"
+        text = ""
+    else:
+        # comment_created / comment_edited have nested message object
+        msg = data.get("message") or {}
+        recipient = msg.get("recipient") or {}
+        sender_info = msg.get("sender") or {}
+        body = msg.get("body") or {}
 
-    ts = msg.get("timestamp")
+        channel_id = recipient.get("chat_id", "")
+        post_id = recipient.get("post_id", "")
+        ts = msg.get("timestamp")
+
+        author_name = sender_info.get("first_name") or "от имени канала"
+        username = sender_info.get("username")
+        author = author_name + (f" (@{username})" if username else "")
+        text = (body.get("text") or "").strip()
+
     time_str = ""
     if ts:
         dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
         time_str = f" · {dt.strftime('%d.%m %H:%M')}"
 
-    author = author_name + (f" (@{username})" if username else "")
+    # Try to get channel title via Bot API
+    channel_label = str(channel_id) if channel_id else "—"
+    if channel_id:
+        try:
+            chat = await bot.get_chat_by_id(id=int(channel_id))
+            if chat and chat.title:
+                channel_label = f"{chat.title} (<code>{channel_id}</code>)"
+            else:
+                channel_label = f"<code>{channel_id}</code>"
+        except Exception:
+            channel_label = f"<code>{channel_id}</code>"
 
     lines = [
         f"💬 Комментарий <b>{kind}</b>{time_str}",
-        f"Канал: <code>{channel_id}</code>",
-        f"Пост: <code>{post_id}</code>",
+        f"Канал: {channel_label}",
+        f"Пост: <code>{post_id}</code>" if post_id else "Пост: —",
         f"Автор: {author}",
     ]
     if text:
@@ -83,9 +107,9 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
 
     notification = "\n".join(lines)
 
+    from maxapi.enums.parse_mode import ParseMode
     for admin_id in config.ADMIN_USER_IDS:
         try:
-            from maxapi.enums.parse_mode import ParseMode
             await bot.send_message(user_id=admin_id, text=notification, parse_mode=ParseMode.HTML)
         except Exception:
             logger.exception("Не удалось отправить уведомление пользователю %s", admin_id)
