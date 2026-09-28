@@ -414,6 +414,146 @@ def register(dp, bot) -> None:
             logger.exception("Не удалось опубликовать комментарий к посту %s", mid)
             await msg.answer(f"❌ Ошибка: {e}")
 
+    # ── /deletecomment ─────────────────────────────────────────────────────
+
+    @dp.message_created(Command("deletecomment"))
+    async def cmd_delete_comment(event: MessageCreated):
+        if not _is_admin(event):
+            await event.message.answer("⛔ Недостаточно прав.")
+            return
+
+        sender = event.message.sender
+        if sender:
+            _pending[sender.user_id] = {"step": "delcmt_forward"}
+        await event.message.answer(
+            "Перешлите пост из канала, в котором нужно удалить комментарий.\n"
+            "/cancel для отмены."
+        )
+
+    # ── deletecomment: шаг 1 — ждём пересланный пост ──────────────────────
+
+    @dp.message_created(PendingStateFilter("delcmt_forward"))
+    async def on_delcmt_forward(event: MessageCreated):
+        msg = event.message
+        link = msg.link
+
+        if not link or link.type != MessageLinkType.FORWARD or not link.message:
+            await msg.answer(
+                "Это не пересланный пост из канала. "
+                "Перешлите пост или /cancel для отмены."
+            )
+            return
+
+        mid = link.message.mid
+        sender = msg.sender
+        if sender is None:
+            return
+
+        await msg.answer("⏳ Загружаю комментарии…")
+
+        try:
+            comments = await platform_api.get_comments(
+                token=config.MAX_BOT_TOKEN, message_id=mid, count=50
+            )
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+            _pending.pop(sender.user_id, None)
+            return
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка: {e}")
+            _pending.pop(sender.user_id, None)
+            return
+
+        if not comments:
+            await msg.answer("Комментариев к этому посту нет.")
+            _pending.pop(sender.user_id, None)
+            return
+
+        # Сохраняем список комментариев для следующего шага
+        _pending[sender.user_id] = {
+            "step": "delcmt_select",
+            "message_id": mid,
+            "comments": comments,
+        }
+
+        lines = [f"Выберите номер комментария для удаления:\n"]
+        for i, c in enumerate(comments, 1):
+            sender_info = c.get("sender") or {}
+            name = sender_info.get("first_name", "Аноним")
+            body = c.get("body") or {}
+            text = (body.get("text") or "").strip()
+            preview = text[:60] + ("…" if len(text) > 60 else "")
+            lines.append(f"{i}. <b>{name}</b>: {preview}")
+
+        await msg.answer(
+            "\n".join(lines) + "\n\n/cancel для отмены.",
+            format=ParseMode.HTML,
+        )
+
+    # ── deletecomment: шаг 2 — ждём номер комментария ─────────────────────
+
+    @dp.message_created(PendingStateFilter("delcmt_select"))
+    async def on_delcmt_select(event: MessageCreated):
+        msg = event.message
+        text = (msg.body.text or "").strip() if msg.body else ""
+
+        sender = msg.sender
+        if sender is None:
+            return
+
+        state = _pending.pop(sender.user_id, {})
+        mid = state.get("message_id")
+        comments = state.get("comments", [])
+
+        try:
+            choice = int(text)
+        except ValueError:
+            await msg.answer("Введите номер из списка. Начните заново: /deletecomment")
+            return
+
+        if choice < 1 or choice > len(comments):
+            await msg.answer(
+                f"Номер должен быть от 1 до {len(comments)}. "
+                "Начните заново: /deletecomment"
+            )
+            return
+
+        target = comments[choice - 1]
+        comment_id = target.get("mid") or target.get("comment_id", "")
+        body = target.get("body") or {}
+        comment_text = (body.get("text") or "").strip()
+
+        if not comment_id:
+            await msg.answer("❌ Не удалось определить ID комментария.")
+            return
+
+        try:
+            await platform_api.delete_comment(
+                token=config.MAX_BOT_TOKEN, message_id=mid, comment_id=comment_id
+            )
+            logger.info("Удалён комментарий %s поста %s", comment_id, mid)
+        except PermissionError as e:
+            await msg.answer(f"⛔ {e}")
+            return
+        except Exception as e:
+            await msg.answer(f"❌ Ошибка при удалении: {e}")
+            return
+
+        # Уведомление в комментариях
+        try:
+            await platform_api.post_comment(
+                token=config.MAX_BOT_TOKEN,
+                message_id=mid,
+                text="Комментарий был удалён за нарушение правил канала.",
+            )
+        except Exception:
+            pass  # Уведомление не критично
+
+        await msg.answer(
+            f"✅ Комментарий удалён.\n"
+            f"Текст: «{comment_text[:100]}{'…' if len(comment_text) > 100 else ''}»"
+        )
+
     # ── /addbutton ─────────────────────────────────────────────────────────
 
     @dp.message_created(Command("addbutton"))

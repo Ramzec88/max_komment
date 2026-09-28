@@ -32,6 +32,35 @@ async def get_comments(token: str, message_id: str, count: int = 10) -> list[dic
         raise RuntimeError(str(e)) from e
 
 
+async def delete_comment(token: str, message_id: str, comment_id: str) -> bool:
+    url = f"{PLATFORM_API}/messages/{message_id}/comments"
+    headers = {"Authorization": token}
+    params = {"comment_id": comment_id}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers, params=params) as resp:
+                if resp.status == 401:
+                    raise PermissionError("Токен недействителен (401)")
+                if resp.status == 403:
+                    raise PermissionError(
+                        "Нет доступа (403) — проверьте, что бот администратор канала "
+                        "с правами read_all_messages и delete"
+                    )
+                data = await resp.json()
+                if not data.get("success"):
+                    msg = data.get("message", "неизвестная ошибка")
+                    raise RuntimeError(f"Удаление не выполнено: {msg}")
+                return True
+    except PermissionError:
+        raise
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.exception("Ошибка при удалении комментария %s поста %s", comment_id, message_id)
+        raise RuntimeError(str(e)) from e
+
+
 async def post_comment(token: str, message_id: str, text: str) -> dict:
     url = f"{PLATFORM_API}/messages/{message_id}/comments"
     headers = {"Authorization": token}
