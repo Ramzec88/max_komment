@@ -59,6 +59,7 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
     if update_type == "comment_removed":
         channel_id = data.get("chat_id", "")
         post_id = data.get("post_id", "")
+        post_url = ""
         user_id = data.get("user_id")
         ts = data.get("timestamp")
         author = f"ID {user_id}" if user_id else "неизвестен"
@@ -72,6 +73,7 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
 
         channel_id = recipient.get("chat_id", "")
         post_id = recipient.get("post_id", "")
+        post_url = msg.get("url", "")
         ts = msg.get("timestamp")
 
         author_name = sender_info.get("first_name") or "от имени канала"
@@ -96,10 +98,17 @@ async def _notify_admins(bot, data: dict, kind: str) -> None:
         except Exception:
             channel_label = f"<code>{channel_id}</code>"
 
+    if post_url:
+        post_line = f'Пост: <a href="{post_url}">{post_url}</a>'
+    elif post_id:
+        post_line = f"Пост: <code>{post_id}</code>"
+    else:
+        post_line = "Пост: —"
+
     lines = [
         f"💬 Комментарий <b>{kind}</b>{time_str}",
         f"Канал: {channel_label}",
-        f"Пост: <code>{post_id}</code>" if post_id else "Пост: —",
+        post_line,
         f"Автор: {author}",
     ]
     if text:
