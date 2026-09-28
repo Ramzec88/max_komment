@@ -30,13 +30,17 @@ async def main():
     if config.WEBHOOK_URL:
         webhook_endpoint = f"{config.WEBHOOK_URL}/webhook"
 
-        # Снимаем старые подписки и регистрируем одну со всеми нужными типами событий
+        # Снимаем старые подписки и ставим новую через Bot API
         await bot.delete_webhook()
+        await bot.subscribe_webhook(url=webhook_endpoint)
+        logger.info("Webhook Bot API зарегистрирован: %s", webhook_endpoint)
+
+        # Регистрируем отдельную подписку на события комментариев через Platform API
         try:
             await platform_api.subscribe_webhooks(config.MAX_BOT_TOKEN, webhook_endpoint)
-            logger.info("Webhook зарегистрирован: %s", webhook_endpoint)
+            logger.info("Webhook комментариев зарегистрирован")
         except Exception:
-            logger.exception("Не удалось зарегистрировать webhook")
+            logger.exception("Не удалось зарегистрировать webhook комментариев")
 
         # Запускаем HTTP-сервер (webhook-режим — без polling)
         maxapi_webhook = AiohttpMaxWebhook(dp=dp, bot=bot)

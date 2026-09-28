@@ -26,10 +26,10 @@ def _session() -> aiohttp.ClientSession:
 
 
 async def subscribe_webhooks(token: str, url: str) -> dict:
-    """Регистрирует webhook для всех событий (бот + комментарии)."""
+    """Регистрирует webhook для событий комментариев."""
     endpoint = f"{PLATFORM_API}/subscriptions"
     headers = {"Authorization": token}
-    payload = {"url": url, "update_types": ALL_WEBHOOK_UPDATE_TYPES}
+    payload = {"url": url, "update_types": COMMENT_UPDATE_TYPES}
 
     async with _session() as session:
         async with session.post(endpoint, headers=headers, json=payload) as resp:
