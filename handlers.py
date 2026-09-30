@@ -1064,7 +1064,9 @@ def register(dp, bot) -> None:
     async def on_channel_post(event: MessageCreated):
         chat_id = event.message.recipient.chat_id
         chat_url = _get_chat_url(chat_id)
+        logger.info("Пост в канале %s, chat_url=%s", chat_id, chat_url)
         if not chat_url:
+            logger.warning("Канал %s не настроен — кнопка не добавлена", chat_id)
             return
 
         msg_id = event.message.body.mid if event.message.body else None
