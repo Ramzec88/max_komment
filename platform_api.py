@@ -4,10 +4,12 @@ import aiohttp
 
 PLATFORM_API = "https://platform-api2.max.ru"
 COMMENT_UPDATE_TYPES = ["comment_created", "comment_edited", "comment_removed"]
+# All event types needed: bot conversation events + channel comment events
 ALL_WEBHOOK_UPDATE_TYPES = [
     "message_created", "message_edited", "message_removed",
-    "bot_added", "bot_removed", "bot_started", "bot_stopped",
-    "chat_title_changed", "message_callback",
+    "message_callback",
+    "bot_started", "bot_added", "bot_removed", "bot_stopped",
+    "chat_title_changed",
     "user_added", "user_removed",
     "comment_created", "comment_edited", "comment_removed",
 ]
@@ -26,10 +28,10 @@ def _session() -> aiohttp.ClientSession:
 
 
 async def subscribe_webhooks(token: str, url: str) -> dict:
-    """Регистрирует webhook для событий комментариев."""
+    """Регистрирует единый webhook для всех событий (бот + комментарии)."""
     endpoint = f"{PLATFORM_API}/subscriptions"
     headers = {"Authorization": token}
-    payload = {"url": url, "update_types": COMMENT_UPDATE_TYPES}
+    payload = {"url": url, "update_types": ALL_WEBHOOK_UPDATE_TYPES}
 
     async with _session() as session:
         async with session.post(endpoint, headers=headers, json=payload) as resp:
